@@ -146,13 +146,13 @@ function defaults(){return{
   weekBudget:0,
   thr:{green:20,amber:35}
 }}
-function load(){try{const r=localStorage.getItem(KEY);if(r)return Object.assign(defaults(),JSON.parse(r))}catch(e){}return defaults()}
+function load(){for(const k of [KEY,KEY+'-safety']){try{const r=localStorage.getItem(k);if(r){const d=JSON.parse(r);if(d&&d.balances&&d.entries)return Object.assign(defaults(),d)}}catch(e){}}return defaults()}
 let applying=false,lastBody='';
 const bodyOf=st=>{const c=Object.assign({},st);delete c._at;delete c._rev;return JSON.stringify(c)};
 function save(){
   const b=bodyOf(S);
   if(b!==lastBody){lastBody=b;if(!applying){S._at=Date.now();S._rev=uid();if(typeof cloudOn==='function'&&cloudOn()){CL.status='pending';paintCloud();schedule()}}}
-  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toastMsg('⚠️ Couldn\'t save','Phone storage may be full')}
+  try{const j=JSON.stringify(S);localStorage.setItem(KEY,j);if(S.setup)localStorage.setItem(KEY+'-safety',j)}catch(e){toastMsg('⚠️ Couldn\'t save','Phone storage may be full')}
 }
 let S=load();lastBody=bodyOf(S);
 let T='home', VM=ds().slice(0,7);
@@ -353,12 +353,11 @@ function vMore(){
     <div class="kv" data-act="thr"><span>🚦 Waste limits (green / amber)</span><b>${S.thr.green}% / ${S.thr.amber}% ›</b></div></div>
   <div class="card"><h3>Spending categories</h3><div class="list">${S.categories.map(c=>`<div class="it" data-act="cat" data-id="${c.id}"><div class="ic">${c.emoji}</div><div class="mid"><div class="t">${esc(c.name)}</div><div class="s">${KINDS[c.kind]}</div></div><div class="a">›</div></div>`).join('')}</div>
     <button class="btn ghost" data-act="cat" data-id="">+ Add category</button></div>
-  ${vCloud()}
-  <div class="card"><h3>Backup file</h3><div class="muted">A file you can keep yourself, as an extra safety net.</div>
+  <div class="card"><h3>Backup file</h3><div class="muted">Your money is saved on this phone and stays safe through app updates. Save a backup file now and then as an extra safety net.</div>
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.5</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.6</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
@@ -612,8 +611,7 @@ function setup(){
    ${Object.entries(POTS).map(([k,p])=>`<div class="lab">${p.name}</div><input class="txt" id="s_${k}" inputmode="decimal" placeholder="0.00">`).join('')}
    <div class="lab">Aiden owes you</div><input class="txt" id="s_aiden" inputmode="decimal" placeholder="0.00">
    <div class="lab">Savings goal</div><input class="txt" id="s_goal" inputmode="decimal" value="5000">
-   <button class="btn" id="ok">Open the bank</button><button class="btn ghost" id="rc">I've used cloud save before — restore</button>`,true);
-  bg.querySelector('#rc').onclick=()=>{bg.remove();S.setup=true;A.cloudSetup()};
+   <button class="btn" id="ok">Open the bank</button>`,true);
   bg.querySelector('#ok').onclick=()=>{
     Object.keys(POTS).forEach(k=>{const v=toP(bg.querySelector('#s_'+k).value);S.balances[k]=isFinite(v)?v:0});
     const a=toP(bg.querySelector('#s_aiden').value);S.aiden.owed=isFinite(a)?a:0;
