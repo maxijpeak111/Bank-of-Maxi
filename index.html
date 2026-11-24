@@ -351,7 +351,7 @@ function vMore(){
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.3</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.4</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
@@ -493,7 +493,11 @@ function setup(){
 
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
-runBills();render();if(!S.setup)setup();
+const STANDALONE=navigator.standalone===true||matchMedia('(display-mode: standalone)').matches;
+const IOS=/iPhone|iPad|iPod/.test(navigator.userAgent);
+runBills();render();
+if(IOS&&!STANDALONE){const n=document.createElement('div');n.className='card';n.style.cssText='margin:8px 14px 0;border-color:var(--ten);border-width:1.5px;max-width:532px;margin-left:auto;margin-right:auto';n.innerHTML='<b style="color:var(--ten)">You\'re in Safari, not the app.</b><div class="muted">Safari keeps its own separate copy of your money. To use your real figures, open Bank of Maxi from its home-screen icon.</div>';document.querySelector('header').after(n)}
+else if(!S.setup)setup();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){runBills();render()}});
 </script>
 </body>
