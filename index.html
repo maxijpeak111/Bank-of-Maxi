@@ -147,8 +147,14 @@ function defaults(){return{
   thr:{green:20,amber:35}
 }}
 function load(){try{const r=localStorage.getItem(KEY);if(r)return Object.assign(defaults(),JSON.parse(r))}catch(e){}return defaults()}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toastMsg('⚠️ Couldn\'t save','Phone storage may be full')}}
-let S=load();
+let applying=false,lastBody='';
+const bodyOf=st=>{const c=Object.assign({},st);delete c._at;delete c._rev;return JSON.stringify(c)};
+function save(){
+  const b=bodyOf(S);
+  if(b!==lastBody){lastBody=b;if(!applying){S._at=Date.now();S._rev=uid();if(typeof cloudOn==='function'&&cloudOn()){CL.status='pending';paintCloud();schedule()}}}
+  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toastMsg('⚠️ Couldn\'t save','Phone storage may be full')}
+}
+let S=load();lastBody=bodyOf(S);
 let T='home', VM=ds().slice(0,7);
 const F={type:'spend',amt:'',pot:'lloyds',to:'savings',cat:'groceries',inc:'wages',note:'',date:ds()};
 const cat=id=>S.categories.find(c=>c.id===id)||{id,name:id,emoji:'📦',kind:'neutral'};
@@ -347,11 +353,12 @@ function vMore(){
     <div class="kv" data-act="thr"><span>🚦 Waste limits (green / amber)</span><b>${S.thr.green}% / ${S.thr.amber}% ›</b></div></div>
   <div class="card"><h3>Spending categories</h3><div class="list">${S.categories.map(c=>`<div class="it" data-act="cat" data-id="${c.id}"><div class="ic">${c.emoji}</div><div class="mid"><div class="t">${esc(c.name)}</div><div class="s">${KINDS[c.kind]}</div></div><div class="a">›</div></div>`).join('')}</div>
     <button class="btn ghost" data-act="cat" data-id="">+ Add category</button></div>
-  <div class="card"><h3>Backup</h3><div class="muted">Everything is saved on this phone only. Make a backup now and then, just in case.</div>
+  ${vCloud()}
+  <div class="card"><h3>Backup file</h3><div class="muted">A file you can keep yourself, as an extra safety net.</div>
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.4</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.5</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
@@ -476,13 +483,137 @@ document.addEventListener('input',ev=>{
 });
 document.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&(ev.target.id==='amt'||ev.target.id==='note')){ev.preventDefault();A.log()}});
 
+
+/* ---------- cloud save: encrypted, Bank of Maxi only ----------
+   Own storage keys (bom.cloud.*), own private repo + access key, own file.
+   Data is encrypted on the device (AES-256-GCM, key from passphrase via PBKDF2-SHA256 310k)
+   before upload, so the file on GitHub can't be read without the passphrase. */
+const CK={tok:'bom.cloud.token',repo:'bom.cloud.repo',pass:'bom.cloud.pass',meta:'bom.cloud.meta'};
+const CFILE='bank-of-maxi.enc.json';
+const lsg=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+const lss=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
+let CM={};try{CM=JSON.parse(lsg(CK.meta))||{}}catch(e){CM={}}
+const saveCM=()=>lss(CK.meta,JSON.stringify(CM));
+const cloudOn=()=>!!(CM.linked&&lsg(CK.tok)&&lsg(CK.repo)&&lsg(CK.pass));
+const CL={status:cloudOn()?'ok':'off',msg:''};
+const u8b64=u=>{let x='';for(let i=0;i<u.length;i+=0x8000)x+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(x)};
+const b64u8=b=>Uint8Array.from(atob(String(b).replace(/\s/g,'')),c=>c.charCodeAt(0));
+const TE=new TextEncoder(),TD=new TextDecoder();
+let keyMemo={id:'',key:null};
+async function cryptoKey(salt,pass){pass=pass||lsg(CK.pass);const id=salt+'|'+pass;if(keyMemo.id!==id){const base=await crypto.subtle.importKey('raw',TE.encode(pass),'PBKDF2',false,['deriveKey']);keyMemo={id,key:await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64u8(salt),iterations:310000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}}return keyMemo.key}
+async function lock(){if(!CM.salt){CM.salt=u8b64(crypto.getRandomValues(new Uint8Array(16)));saveCM()}const iv=crypto.getRandomValues(new Uint8Array(12));const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await cryptoKey(CM.salt),TE.encode(JSON.stringify(S))));return{app:'bank-of-maxi',v:1,salt:CM.salt,iv:u8b64(iv),ct:u8b64(ct),_at:S._at||0,_rev:S._rev||''}}
+async function unlock(f,pass){try{const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64u8(f.iv)},await cryptoKey(f.salt,pass),b64u8(f.ct));return JSON.parse(TD.decode(pt))}catch(e){const er=new Error('Wrong passphrase. The cloud copy was locked with a different one.');er.pass=true;throw er}}
+const gh=(path,opt={})=>fetch('https://api.github.com/repos/'+lsg(CK.repo)+path,Object.assign({cache:'no-store'},opt,{headers:Object.assign({Authorization:'Bearer '+lsg(CK.tok),Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},opt.headers||{})}));
+function ghFail(st){const e=new Error(st===401?'Your access key has stopped working (it may have expired). Make a new one and reconnect.':st===403||st===404?'Your access key can\'t reach that repo. Check the repo name and that the key has Contents: Read and write for it.':'GitHub had a problem ('+st+').');e.auth=[401,403,404].includes(st);return e}
+async function getRemote(){
+  const r=await gh('/contents/'+CFILE);if(r.status===404)return{missing:true};if(!r.ok)throw ghFail(r.status);
+  const j=await r.json();let txt;
+  if(j.content&&j.encoding==='base64')txt=TD.decode(b64u8(j.content));else{const b=await gh('/git/blobs/'+j.sha);if(!b.ok)throw ghFail(b.status);txt=TD.decode(b64u8((await b.json()).content))}
+  const f=JSON.parse(txt);if(f.app!=='bank-of-maxi'||!f.ct)throw new Error('The cloud file isn\'t a Bank of Maxi file.');
+  return{sha:j.sha,file:f};
+}
+async function putRemote(sha){
+  const at=S._at||0,f=await lock();
+  const r=await gh('/contents/'+CFILE,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Bank of Maxi auto-save',content:u8b64(TE.encode(JSON.stringify(f))),sha:sha||undefined})});
+  if(r.status===409||r.status===422)return false;if(!r.ok)throw ghFail(r.status);
+  CM.sha=(await r.json()).content.sha;CM.syncedAt=at;return true;
+}
+function applyCloud(d){applying=true;try{S=Object.assign(defaults(),d);save()}finally{applying=false}lastBody=bodyOf(S);CM.syncedAt=d._at||0;render()}
+let ctimer=null,cbusy=false,cagain=false,casking=false,cwarned=false;
+function schedule(ms){clearTimeout(ctimer);ctimer=setTimeout(sync,ms==null?1500:ms)}
+async function sync(){
+  clearTimeout(ctimer);ctimer=null;
+  if(!cloudOn()||casking)return;
+  if(!navigator.onLine){CL.status='offline';paintCloud();return}
+  if(cbusy){cagain=true;return}
+  cbusy=true;CL.status='saving';paintCloud();let asked=false;
+  try{
+    for(let i=0;i<3;i++){
+      const rem=await getRemote();
+      if(rem.missing){if(await putRemote(null))break;continue}
+      const f=rem.file;CM.sha=rem.sha;if(f.salt)CM.salt=f.salt;
+      const lAt=S._at||0,rAt=f._at||0,base=CM.syncedAt||0;
+      if(rAt===lAt&&f._rev===S._rev){CM.syncedAt=lAt;break}
+      const lc=lAt>base,rc=rAt>base||(rAt===lAt&&!lc);
+      if(lc&&rc){asked=true;askWhich(f,rem.sha);break}
+      if(lc){if(await putRemote(rem.sha))break;continue}
+      const d=await unlock(f);if(d&&d.balances&&d.entries)applyCloud(d);
+      break;
+    }
+    if(!asked){CL.status='ok';CL.msg='';CM.lastOk=Date.now();cwarned=false}
+  }catch(e){
+    const stop=e.auth||e.pass;CL.status=stop?'auth':'error';
+    CL.msg=stop?e.message:(e.message&&e.message.startsWith('GitHub')?e.message:'Couldn\'t reach GitHub.');
+    if(stop&&!cwarned){cwarned=true;toastMsg('☁️ Cloud save stopped','Open More → Cloud save to fix it',4000)}
+    if(!stop)schedule(60000);
+  }finally{saveCM();cbusy=false;paintCloud();if(cagain){cagain=false;schedule(0)}}
+}
+function askWhich(f,sha){
+  casking=true;CL.status='ask';paintCloud();
+  const when=t=>t?new Date(t).toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'unknown';
+  const bg=sheet(`<h3>Which version?</h3><div class="muted">This device and your other device both changed things since they last matched. Pick one to keep — the other is kept as a safety copy on this device.</div>
+   <button class="btn" id="c1">Cloud version (${when(f._at)})</button><button class="btn ghost" id="c2">This device (${when(S._at)})</button>`,true);
+  bg.querySelector('#c1').onclick=async()=>{try{const d=await unlock(f);lss('bom.before-cloud',JSON.stringify(S));casking=false;bg.remove();applyCloud(d);CL.status='ok';CM.lastOk=Date.now();saveCM();paintCloud();toastMsg('Using the cloud version')}catch(e){toastMsg('Couldn\'t open it',e.message)}};
+  bg.querySelector('#c2').onclick=()=>{casking=false;bg.remove();lss('bom.before-cloud-remote',JSON.stringify(f));CM.syncedAt=f._at||0;CM.sha=sha;S._at=Math.max(Date.now(),(f._at||0)+1);S._rev=uid();applying=true;save();applying=false;saveCM();sync()};
+}
+const cago=t=>{if(!t)return'';const x=(Date.now()-t)/1000;return x<60?'just now':x<3600?Math.round(x/60)+' min ago':new Date(t).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})};
+function cloudText(){return!cloudOn()?'Off — your money is only saved on this phone.':CL.status==='saving'?'Saving to the cloud…':CL.status==='pending'?'Saving shortly…':CL.status==='offline'?'No internet — saved on this phone, will upload when you\'re back online.':CL.status==='auth'?'⚠️ '+CL.msg:CL.status==='error'?'⚠️ '+CL.msg+' Saved on this phone; trying again soon.':CL.status==='ask'?'Waiting for you to pick a version.':'✓ Encrypted and saved'+(CM.lastOk?' · '+cago(CM.lastOk):'')}
+function paintCloud(){document.querySelectorAll('.cloud-status').forEach(el=>el.textContent=cloudText())}
+function vCloud(){return`<div class="card"><h3>☁️ Cloud save <small>encrypted</small></h3>
+  <div class="muted">${cloudOn()?'Every change is locked with your passphrase on this phone, then saved to your private GitHub repo. If you delete the app or change phone, reconnect and it all comes back.':'Back up everything to your own private GitHub repo, locked with a passphrase only you know. Nothing is lost if you delete the app or change phone, and it works on your Mac too.'}</div>
+  <div class="cloud-status" style="font-weight:700;margin-top:8px;font-size:14px">${esc(cloudText())}</div>
+  ${cloudOn()?`<div class="row" style="margin-top:10px"><button class="btn sm" data-act="cloudNow" style="flex:1">Save now</button><button class="btn ghost sm" data-act="cloudSetup" style="flex:1">Change</button></div><button class="btn ghost" data-act="cloudOff">Turn off on this device</button>`:`<button class="btn" data-act="cloudSetup">Set up cloud save</button>`}</div>`}
+A.cloudNow=()=>{casking=false;sync()};
+A.cloudOff=()=>{if(!confirm('Turn off cloud save on this device? Your cloud copy stays safe, and this removes the access key and passphrase from this phone.'))return;CM={};saveCM();lss(CK.tok,null);lss(CK.pass,null);lss(CK.repo,null);CL.status='off';render();toastMsg('Cloud save off','Key and passphrase removed from this phone')};
+A.cloudSetup=()=>{
+  const bg=sheet(`<h3>Cloud save setup</h3>
+   <div class="muted">One-time setup on GitHub — use a <b>new private repo just for money</b> (e.g. <i>money-data</i>) and a <b>new access key just for that repo</b>, so it's completely separate from your other apps.</div>
+   <div class="lab">Private repo</div><input class="txt" id="cr" placeholder="maxijpeak111/money-data" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(lsg(CK.repo)||'')}">
+   <div class="lab">Access key</div><input class="txt" id="ct" type="password" placeholder="github_pat_…" autocapitalize="off" autocorrect="off" spellcheck="false">
+   <div class="lab">Passphrase</div><input class="txt" id="cp" type="password" placeholder="At least 10 characters" autocapitalize="off" autocorrect="off" spellcheck="false">
+   <div class="muted" style="margin-top:6px">This locks your data. Save it in the Passwords app — if you lose it, the cloud copy can't be opened by anyone, including you. Use the same one on your Mac.</div>
+   <div id="cm" style="font-weight:700;margin-top:10px;font-size:14px"></div>
+   <button class="btn" id="cgo">Connect</button><button class="btn ghost" id="cx">Cancel</button>`,true);
+  const q=x=>bg.querySelector(x),msg=t=>q('#cm').textContent=t;
+  q('#cx').onclick=()=>bg.remove();
+  q('#cgo').onclick=async()=>{
+    let repo=q('#cr').value.trim().replace(/^https?:\/\/github\.com\//,'').replace(/\.git$/,'').replace(/\/+$/,'');
+    const tok=q('#ct').value.trim()||lsg(CK.tok)||'',pass=q('#cp').value;
+    if(!/^[\w.-]+\/[\w.-]+$/.test(repo))return msg('Type the repo as yourname/repo-name.');
+    if(/\/(bank-of-maxi|pt-app|organised-hotel|spanish-app)$/i.test(repo))return msg('Use a separate private repo for your money data, not an app repo.');
+    if(!tok)return msg('Paste your access key.');
+    if(pass.length<10)return msg('Passphrase needs at least 10 characters.');
+    const prev={r:lsg(CK.repo),t:lsg(CK.tok),p:lsg(CK.pass)};
+    lss(CK.repo,repo);lss(CK.tok,tok);lss(CK.pass,pass);
+    const undo=()=>{lss(CK.repo,prev.r);lss(CK.tok,prev.t);lss(CK.pass,prev.p)};
+    q('#cgo').disabled=true;msg('Checking…');
+    try{
+      const r=await gh('');if(!r.ok)throw ghFail(r.status);
+      if(!(await r.json()).private){undo();q('#cgo').disabled=false;return msg('That repo is public. Make it private on GitHub first (Settings → Danger Zone → Change visibility).')}
+      const rem=await getRemote();
+      if(rem.missing){CM={linked:true,syncedAt:0};saveCM();bg.remove();toastMsg('☁️ Cloud save is on','Encrypted with your passphrase');await sync();render();return}
+      msg('Unlocking…');const d=await unlock(rem.file,pass);
+      CM={linked:true,sha:rem.sha,salt:rem.file.salt};saveCM();bg.remove();
+      const when=rem.file._at?new Date(rem.file._at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'earlier';
+      const b2=sheet(`<h3>You already have cloud data</h3><div class="muted">Last changed ${when}. Which do you want?</div>
+        <button class="btn" id="u1">Use the cloud data (new or reset device)</button><button class="btn ghost" id="u2">Keep this phone's data</button>`,true);
+      b2.querySelector('#u1').onclick=()=>{lss('bom.before-cloud',JSON.stringify(S));b2.remove();applyCloud(d);CM.lastOk=Date.now();CL.status='ok';saveCM();render();toastMsg('Your money is back ✓')};
+      b2.querySelector('#u2').onclick=()=>{if(!confirm('Replace the cloud copy with this phone\'s data? GitHub keeps the old version in its history.'))return;CM.syncedAt=rem.file._at||0;S._at=Math.max(Date.now(),(rem.file._at||0)+1);S._rev=uid();applying=true;save();applying=false;lastBody=bodyOf(S);saveCM();b2.remove();sync().then(render)};
+    }catch(e){undo();q('#cgo').disabled=false;msg(e.auth||e.pass?e.message:'Couldn\'t reach GitHub. Check your internet and try again.')}
+  };
+};
+function wake(){if(cloudOn())sync().finally(()=>{runBills();render()});else{runBills();render()}}
+window.addEventListener('online',()=>{if(cloudOn())sync()});
+setInterval(()=>{if(cloudOn()&&!document.hidden)sync()},120000);
+
 /* ---------- first run ---------- */
 function setup(){
   const bg=sheet(`<h3>Welcome to Bank of Maxi</h3><div class="muted">Pop in what you've got right now. You can tap any balance later to change it.</div>
    ${Object.entries(POTS).map(([k,p])=>`<div class="lab">${p.name}</div><input class="txt" id="s_${k}" inputmode="decimal" placeholder="0.00">`).join('')}
    <div class="lab">Aiden owes you</div><input class="txt" id="s_aiden" inputmode="decimal" placeholder="0.00">
    <div class="lab">Savings goal</div><input class="txt" id="s_goal" inputmode="decimal" value="5000">
-   <button class="btn" id="ok">Open the bank</button>`,true);
+   <button class="btn" id="ok">Open the bank</button><button class="btn ghost" id="rc">I've used cloud save before — restore</button>`,true);
+  bg.querySelector('#rc').onclick=()=>{bg.remove();S.setup=true;A.cloudSetup()};
   bg.querySelector('#ok').onclick=()=>{
     Object.keys(POTS).forEach(k=>{const v=toP(bg.querySelector('#s_'+k).value);S.balances[k]=isFinite(v)?v:0});
     const a=toP(bg.querySelector('#s_aiden').value);S.aiden.owed=isFinite(a)?a:0;
@@ -495,10 +626,10 @@ if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catc
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
 const STANDALONE=navigator.standalone===true||matchMedia('(display-mode: standalone)').matches;
 const IOS=/iPhone|iPad|iPod/.test(navigator.userAgent);
-runBills();render();
+render();wake();
 if(IOS&&!STANDALONE){const n=document.createElement('div');n.className='card';n.style.cssText='margin:8px 14px 0;border-color:var(--ten);border-width:1.5px;max-width:532px;margin-left:auto;margin-right:auto';n.innerHTML='<b style="color:var(--ten)">You\'re in Safari, not the app.</b><div class="muted">Safari keeps its own separate copy of your money. To use your real figures, open Bank of Maxi from its home-screen icon.</div>';document.querySelector('header').after(n)}
 else if(!S.setup)setup();
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){runBills();render()}});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake()});
 </script>
 </body>
 </html>
