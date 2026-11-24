@@ -143,7 +143,7 @@ function defaults(){return{
   billsThrough:ds(),
   aiden:{owed:0},
   goal:500000,
-  weekBudget:0,
+  weekBudget:0,budgetAuto:false,goalWeekly:0,goalDate:'',
   thr:{green:20,amber:35}
 }}
 function load(){for(const k of [KEY,KEY+'-safety']){try{const r=localStorage.getItem(k);if(r){const d=JSON.parse(r);if(d&&d.balances&&d.entries)return Object.assign(defaults(),d)}}catch(e){}}return defaults()}
@@ -218,10 +218,33 @@ function greenBar(st){
   <div class="muted" style="margin-top:4px">Day-to-day spending only — bills not counted.</div>`;
 }
 
+/* ---------- typical week + goal plan ---------- */
+function typicalWeek(){
+  const ws=weekStart(new Date()),out=[];
+  for(let i=1;i<=8;i++){const a=new Date(ws);a.setDate(a.getDate()-7*i);const b=new Date(a);b.setDate(b.getDate()+6);const A1=ds(a),B1=ds(b);
+    const es=S.entries.filter(e=>e.date>=A1&&e.date<=B1);if(!S.entries.some(e=>e.date<=B1))break;
+    out.push(sum(es.filter(e=>e.type==='spend'&&cat(e.cat).kind!=='bill')));if(out.length===4)break}
+  if(!out.length)return null;return{avg:Math.round(out.reduce((x,y)=>x+y,0)/out.length/100)*100,weeks:out.length};
+}
+function budgetNow(){if(S.budgetAuto){const t=typicalWeek();return t?t.avg:0}return S.weekBudget}
+function goalPlan(){
+  const left=Math.max(0,S.goal-S.balances.savings),r={left};
+  if(S.goalWeekly>0)r.weeks=Math.ceil(left/S.goalWeekly);
+  if(S.goalDate){const w=Math.max(1,Math.ceil((pd(S.goalDate)-new Date())/(7*864e5)));r.weeksToDate=w;r.need=Math.ceil(left/w/100)*100;}
+  return r;
+}
+function goalLine(){
+  const g=goalPlan();if(!g.left)return'🎉 Goal reached!';
+  const parts=[];
+  if(g.weeks!=null){const d=new Date();d.setDate(d.getDate()+g.weeks*7);parts.push(`${g.weeks} week${g.weeks===1?'':'s'} away at ${fmt0(S.goalWeekly)}/week (${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()})`)}
+  if(g.need!=null){const ok=S.goalWeekly>=g.need;parts.push(`${ok?'✅':'⚠️'} Need ${fmt0(g.need)}/week to hit it by ${nice(S.goalDate)}`)}
+  return parts.join('<br>')||'Tap to set a weekly amount and a target date';
+}
+
 /* ---------- views ---------- */
 function vBalances(){
   return`<div class="hero" data-act="allBal"><div class="lbl">Overall money</div><div class="big">${fmt(total())}</div>
-  <div class="pots">${Object.entries(POTS).map(([k,p])=>`<button class="pot" style="background:${p.c}" data-act="editBal" data-k="${k}"><div class="n">${p.name}</div><div class="v">${fmt(S.balances[k])}</div></button>`).join('')}</div></div>`;
+  <div class="pots">${Object.entries(POTS).map(([k,p])=>`<button class="pot" style="background:${p.c}" data-act="editBal" data-k="${k}"><div class="n">${p.name}</div><div class="v">${fmt(S.balances[k])}</div>${S.balances[k]<0?'<div class="n" style="opacity:1">overdrawn</div>':''}</button>`).join('')}</div></div>`;
 }
 function vForm(){
   const pc=(key,sel,ex)=>Object.entries(POTS).filter(([k])=>k!==ex).map(([k,p])=>`<button class="chip ${sel===k?'on':''}" data-act="set" data-k="${key}" data-v="${k}">${p.name} <small>${fmt0(S.balances[k])}</small></button>`).join('');
@@ -258,12 +281,12 @@ function vHome(){
   const lmTo=sum(S.entries.filter(e=>e.type==='spend'&&e.date.startsWith(lm)&&+e.date.slice(8)<=now.getDate()));
   const diff=st.out-lmTo;
   const goalPct=S.goal>0?Math.min(100,Math.max(0,S.balances.savings/S.goal*100)):0;
-  const budget=S.weekBudget>0?`<div style="margin-top:12px"><div class="catrow top" style="display:flex;justify-content:space-between;font-size:14px"><span>Day-to-day spend vs budget</span><b>${fmt0(wDay)} / ${fmt0(S.weekBudget)}</b></div>
-    <div class="bar"><span style="width:${Math.min(100,wDay/S.weekBudget*100)}%;background:${wDay>S.weekBudget?'var(--fifty)':wDay>S.weekBudget*.8?'var(--amber)':'var(--good)'}"></span></div>
-    <div class="muted">${wDay>S.weekBudget?fmt(wDay-S.weekBudget)+' over budget':fmt(S.weekBudget-wDay)+' left until Friday'}</div></div>`:`<div class="muted" style="margin-top:10px">Set a weekly budget in More → it'll show here.</div>`;
+  const budget=budgetNow()>0?`<div style="margin-top:12px"><div class="catrow top" style="display:flex;justify-content:space-between;font-size:14px"><span>Day-to-day spend vs budget</span><b>${fmt0(wDay)} / ${fmt0(budgetNow())}</b></div>
+    <div class="bar"><span style="width:${Math.min(100,wDay/budgetNow()*100)}%;background:${wDay>budgetNow()?'var(--fifty)':wDay>budgetNow()*.8?'var(--amber)':'var(--good)'}"></span></div>
+    <div class="muted">${wDay>budgetNow()?fmt(wDay-budgetNow())+' over budget':fmt(budgetNow()-wDay)+' left until Friday'}</div></div>`:`<div class="muted" style="margin-top:10px">Set a weekly budget in More → it'll show here.</div>`;
   const incB=Object.entries(INCOME).filter(([k])=>st.byInc[k]).map(([k,l])=>`${l} ${fmt0(st.byInc[k])}`).join(' · ');
   return vBalances()+
-  `<div class="card" data-act="goal" style="padding:12px 14px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>🎯 Savings goal</span><b>${fmt0(S.balances.savings)} / ${fmt0(S.goal)}</b></div><div class="bar"><span style="width:${goalPct}%;background:var(--sav)"></span></div></div>`+
+  `<div class="card" data-act="goal" style="padding:12px 14px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>🎯 Savings goal</span><b>${fmt0(S.balances.savings)} / ${fmt0(S.goal)}</b></div><div class="bar"><span style="width:${goalPct}%;background:var(--sav)"></span></div><div class="muted">${goalLine()}</div></div>`+
   vForm()+
   `<div class="card"><h3>This month <small>${monthName(m)}</small></h3>
    <div class="muted">Spent so far</div><div class="bigspend neg">${fmt(st.out)}</div>
@@ -288,7 +311,7 @@ function vBreakdown(){
   const ws=ds(weekStart(now)),wDay=sum(S.entries.filter(e=>e.type==='spend'&&e.date>=ws&&e.date<=today&&cat(e.cat).kind!=='bill'));
   const upto=new Date(Math.max(nextFri,eom)),dueSoon=billsBetween(ds(tmr),ds(upto));
   let left,leftSub;
-  if(S.weekBudget>0){left=S.weekBudget-wDay;leftSub=`of your ${fmt0(S.weekBudget)} budget`}
+  if(budgetNow()>0){left=budgetNow()-wDay;leftSub=`of your ${fmt0(budgetNow())} budget`}
   else{left=spendable-dueSoon;leftSub=`after ${fmt0(dueSoon)} bills to come`}
   const perDay=Math.floor(left/daysLeft);
   // forecast
@@ -319,7 +342,7 @@ function vBreakdown(){
    ${tile('var(--ten)','Spend by month end',fmt0(forecastOut),afterRent>=0?`${fmt0(afterRent)} spare after the 1st`:`${fmt0(-afterRent)} short for the 1st`)}
    ${tile('var(--twenty)',net>=0?'Up this month':'Down this month',(net>=0?'+':'')+fmt0(net),`${fmt0(st.in)} in · ${fmt0(st.out)} out`)}
   </div>
-  <div class="muted" style="margin-top:6px;padding:0 4px">${S.weekBudget>0?'Left till Friday uses your weekly budget.':'Left till Friday = Lloyds + Monzo + cash, minus bills still to come.'} Forecast assumes you keep spending at this month's rate.</div>
+  <div class="muted" style="margin-top:6px;padding:0 4px">${budgetNow()>0?'Left till Friday uses your weekly budget.':'Left till Friday = Lloyds + Monzo + cash, minus bills still to come.'} Forecast assumes you keep spending at this month's rate.</div>
   <div class="card"><h3>Money in vs money out <small>${monthName(m)}</small></h3>
    <div class="catrow"><div class="top"><span>💷 Money in</span><b class="pos">${fmt(st.in)}</b></div><div class="bar"><span style="width:${st.in/max*100}%;background:var(--good)"></span></div></div>
    <div class="catrow"><div class="top"><span>💸 Money out</span><b class="neg">${fmt(st.out)}</b></div><div class="bar"><span style="width:${st.byKind.bill/max*100}%;background:var(--twenty)"></span><span style="width:${dtd/max*100}%;background:var(--fifty)"></span></div>
@@ -348,8 +371,8 @@ function vMore(){
     <div class="muted">Log a repayment as Money in → "Aiden repayment" and this goes down.</div>
     <div class="row" style="margin-top:10px"><button class="btn sm" data-act="aidenPay" style="flex:1">Log repayment</button><button class="btn ghost sm" data-act="aidenEdit" style="flex:1">Edit amount</button></div></div>
   <div class="card"><h3>Settings</h3>
-    <div class="kv" data-act="goal"><span>🎯 Savings goal</span><b>${fmt0(S.goal)} ›</b></div>
-    <div class="kv" data-act="budget"><span>📅 Weekly budget (day-to-day)</span><b>${S.weekBudget?fmt0(S.weekBudget):'Not set'} ›</b></div>
+    <div class="kv" data-act="goal"><span>🎯 Savings goal</span><b>${fmt0(S.goal)}${S.goalWeekly?' · '+fmt0(S.goalWeekly)+'/wk':''} ›</b></div>
+    <div class="kv" data-act="budget"><span>📅 Weekly budget (day-to-day)</span><b>${budgetNow()?fmt0(budgetNow())+(S.budgetAuto?' (typical)':''):'Not set'} ›</b></div>
     <div class="kv" data-act="thr"><span>🚦 Waste limits (green / amber)</span><b>${S.thr.green}% / ${S.thr.amber}% ›</b></div></div>
   <div class="card"><h3>Spending categories</h3><div class="list">${S.categories.map(c=>`<div class="it" data-act="cat" data-id="${c.id}"><div class="ic">${c.emoji}</div><div class="mid"><div class="t">${esc(c.name)}</div><div class="s">${KINDS[c.kind]}</div></div><div class="a">›</div></div>`).join('')}</div>
     <button class="btn ghost" data-act="cat" data-id="">+ Add category</button></div>
@@ -357,7 +380,7 @@ function vMore(){
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.6</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.7</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
@@ -413,9 +436,42 @@ const A={
     toastMsg(p,s,3200);F.amt='';F.note='';F.date=ds();render();
   },
   allBal(){},
-  editBal(d,_,el,ev){ev.stopPropagation();ask(`${POTS[d.k].name} balance`,'Type what\'s actually in there now — it replaces the old number.',(S.balances[d.k]/100).toFixed(2),v=>{S.balances[d.k]=v})},
-  goal(){ask('Savings goal','',(S.goal/100).toFixed(0),v=>{S.goal=v})},
-  budget(){ask('Weekly budget','Day-to-day spending per week (Fri–Thu), not counting bills. 0 to turn off.',(S.weekBudget/100).toFixed(0),v=>{S.weekBudget=Math.max(0,v)})},
+  editBal(d,_,el,ev){ev.stopPropagation();
+    const cur=S.balances[d.k];let neg=cur<0;
+    const bg=sheet(`<h3>${POTS[d.k].name} balance</h3><div class="muted">Type what's in there now — it replaces the old number.</div>
+     <div class="seg" style="margin-top:12px"><button id="pp">In credit</button><button id="nn">Overdrawn (−)</button></div>
+     <div class="amt" id="amtw">£<input id="sv" inputmode="decimal" value="${(Math.abs(cur)/100).toFixed(2)}"></div>
+     <button class="btn" id="sok">Save</button><button class="btn ghost" id="sx">Cancel</button>`);
+    const q=x=>bg.querySelector(x),paint=()=>{q('#pp').className=neg?'':'on';q('#nn').className=neg?'on':'';q('#amtw').style.color=neg?'var(--fifty)':''};paint();
+    q('#pp').onclick=()=>{neg=false;paint()};q('#nn').onclick=()=>{neg=true;paint()};
+    setTimeout(()=>{q('#sv').focus();q('#sv').select()},50);q('#sx').onclick=()=>bg.remove();
+    q('#sok').onclick=()=>{const v=toP(q('#sv').value.replace('-',''));if(!isFinite(v))return;S.balances[d.k]=neg?-v:v;save();bg.remove();render()};
+  },
+  goal(){
+    const bg=sheet(`<h3>🎯 Savings goal</h3>
+     <div class="lab">Goal amount (£)</div><input class="txt" id="ga" inputmode="decimal" value="${(S.goal/100).toFixed(0)}">
+     <div class="lab">I'll save each week (£)</div><input class="txt" id="gw" inputmode="decimal" placeholder="e.g. 50" value="${S.goalWeekly?(S.goalWeekly/100).toFixed(0):''}">
+     <div class="lab">Reach it by (optional)</div><input class="txt" type="date" id="gd" value="${S.goalDate||''}">
+     <div class="card" id="gp" style="font-size:14px"></div>
+     <button class="btn" id="ok">Save</button>${S.goalDate?'<button class="btn ghost" id="gc">Clear date</button>':''}<button class="btn ghost" id="x">Cancel</button>`);
+    const q=x=>bg.querySelector(x);
+    const preview=()=>{const o={g:S.goal,w:S.goalWeekly,d:S.goalDate};S.goal=toP(q('#ga').value)||0;S.goalWeekly=toP(q('#gw').value)||0;S.goalDate=q('#gd').value;q('#gp').innerHTML=`${fmt0(goalPlan().left)} still to save<br>`+goalLine();S.goal=o.g;S.goalWeekly=o.w;S.goalDate=o.d};
+    bg.addEventListener('input',preview);preview();
+    q('#x').onclick=()=>bg.remove();if(q('#gc'))q('#gc').onclick=()=>{q('#gd').value='';preview()};
+    q('#ok').onclick=()=>{const g=toP(q('#ga').value);if(!(g>0))return;S.goal=g;S.goalWeekly=Math.max(0,toP(q('#gw').value)||0);S.goalDate=q('#gd').value;save();bg.remove();render()};
+  },
+  budget(){
+    const t=typicalWeek();
+    const bg=sheet(`<h3>📅 Weekly budget</h3><div class="muted">Day-to-day spending per week (Fri–Thu), not counting bills.</div>
+     <div class="card">${t?`Your typical week: <b>${fmt0(t.avg)}</b><div class="muted">Average of your last ${t.weeks} full week${t.weeks>1?'s':''}</div>
+       <button class="btn" id="auto">${S.budgetAuto?'✓ ':''}Use my typical week (updates itself)</button>`:'<div class="muted">Log your spending for a full week (Fri–Thu) and the app will work out your typical week here.</div>'}</div>
+     <div class="lab">Or set your own (£)</div><input class="txt" id="bv" inputmode="decimal" value="${!S.budgetAuto&&S.weekBudget?(S.weekBudget/100).toFixed(0):''}" placeholder="e.g. 80">
+     <button class="btn ${t?'ghost':''}" id="ok">Use this amount</button><button class="btn ghost" id="off">Turn budget off</button>`);
+    const q=x=>bg.querySelector(x);
+    if(q('#auto'))q('#auto').onclick=()=>{S.budgetAuto=true;save();bg.remove();render();toastMsg('Budget: '+fmt0(t.avg)+'/week','Based on your typical week')};
+    q('#ok').onclick=()=>{const v=toP(q('#bv').value);if(!(v>0))return;S.budgetAuto=false;S.weekBudget=v;save();bg.remove();render()};
+    q('#off').onclick=()=>{S.budgetAuto=false;S.weekBudget=0;save();bg.remove();render()};
+  },
   thr(){
     const bg=sheet(`<h3>Waste limits</h3><div class="muted">Bar is green while waste is under the first %, amber under the second, red above.</div>
      <div class="row" style="margin-top:10px"><input class="txt" id="tg" inputmode="numeric" value="${S.thr.green}"><input class="txt" id="ta" inputmode="numeric" value="${S.thr.amber}"></div><button class="btn" id="ok">Save</button>`);
@@ -608,12 +664,12 @@ setInterval(()=>{if(cloudOn()&&!document.hidden)sync()},120000);
 /* ---------- first run ---------- */
 function setup(){
   const bg=sheet(`<h3>Welcome to Bank of Maxi</h3><div class="muted">Pop in what you've got right now. You can tap any balance later to change it.</div>
-   ${Object.entries(POTS).map(([k,p])=>`<div class="lab">${p.name}</div><input class="txt" id="s_${k}" inputmode="decimal" placeholder="0.00">`).join('')}
+   ${Object.entries(POTS).map(([k,p])=>`<div class="lab">${p.name}</div><div class="row"><input class="txt" id="s_${k}" inputmode="decimal" placeholder="0.00">${k==='lloyds'||k==='monzo'?`<label class="muted" style="flex:none;display:flex;gap:4px;align-items:center"><input type="checkbox" id="n_${k}">Overdrawn</label>`:''}</div>`).join('')}
    <div class="lab">Aiden owes you</div><input class="txt" id="s_aiden" inputmode="decimal" placeholder="0.00">
    <div class="lab">Savings goal</div><input class="txt" id="s_goal" inputmode="decimal" value="5000">
    <button class="btn" id="ok">Open the bank</button>`,true);
   bg.querySelector('#ok').onclick=()=>{
-    Object.keys(POTS).forEach(k=>{const v=toP(bg.querySelector('#s_'+k).value);S.balances[k]=isFinite(v)?v:0});
+    Object.keys(POTS).forEach(k=>{let v=toP(bg.querySelector('#s_'+k).value);v=isFinite(v)?Math.abs(v):0;const n=bg.querySelector('#n_'+k);S.balances[k]=n&&n.checked?-v:v});
     const a=toP(bg.querySelector('#s_aiden').value);S.aiden.owed=isFinite(a)?a:0;
     const g=toP(bg.querySelector('#s_goal').value);if(isFinite(g)&&g>0)S.goal=g;
     S.setup=true;S.billsThrough=ds();save();bg.remove();render();
