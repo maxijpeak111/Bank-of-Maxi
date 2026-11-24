@@ -269,23 +269,57 @@ function vHome(){
   `<div class="card"><h3>Recent</h3><div class="list">${sorted().slice(0,12).map(entryRow).join('')||'<div class="muted">Nothing logged yet — add your first spend above.</div>'}</div>${S.entries.length>12?`<button class="btn ghost" data-act="tab" data-v="history">See all</button>`:''}</div>`;
 }
 
+function billsBetween(fromDs,toDs){let t=0;const d=pd(fromDs),end=pd(toDs);for(let i=0;i<70&&d<=end;i++){const dim=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();S.bills.filter(b=>b.active).forEach(b=>{if(d.getDate()===Math.min(b.day,dim))t+=b.amount});d.setDate(d.getDate()+1)}return t}
 function vBreakdown(){
-  const m=ds().slice(0,7),st=monthStats(m);
-  const max=Math.max(1,st.in,st.out),net=st.in-st.out;
-  const waste=st.spends.filter(e=>cat(e.cat).kind==='waste');
-  const wTags=tagMap('spend',e=>e.date.startsWith(m)&&cat(e.cat).kind==='waste').sort((a,b)=>b.total-a.total);
+  const now=new Date(),today=ds(now),m=today.slice(0,7),st=monthStats(m);
+  const tmr=new Date(now);tmr.setDate(tmr.getDate()+1);
+  const nextFri=new Date(now);nextFri.setDate(nextFri.getDate()+(((5-now.getDay())+7)%7||7));
+  const daysLeft=Math.max(1,Math.round((nextFri-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/864e5));
+  const dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate(),dayN=now.getDate();
+  const eom=new Date(now.getFullYear(),now.getMonth(),dim);
+  const spendable=S.balances.lloyds+S.balances.monzo+S.balances.cash;
+  // money left till Friday
+  const ws=ds(weekStart(now)),wDay=sum(S.entries.filter(e=>e.type==='spend'&&e.date>=ws&&e.date<=today&&cat(e.cat).kind!=='bill'));
+  const upto=new Date(Math.max(nextFri,eom)),dueSoon=billsBetween(ds(tmr),ds(upto));
+  let left,leftSub;
+  if(S.weekBudget>0){left=S.weekBudget-wDay;leftSub=`of your ${fmt0(S.weekBudget)} budget`}
+  else{left=spendable-dueSoon;leftSub=`after ${fmt0(dueSoon)} bills to come`}
+  const perDay=Math.floor(left/daysLeft);
+  // forecast
+  const dtd=st.out-st.byKind.bill,dtdRate=dtd/dayN,restDays=dim-dayN;
+  const billsRest=billsBetween(ds(tmr),ds(eom));
+  const forecastOut=Math.round(st.out+dtdRate*restDays+billsRest);
+  const nextRent=billsBetween(ds(new Date(now.getFullYear(),now.getMonth()+1,1)),ds(new Date(now.getFullYear(),now.getMonth()+1,1)));
+  const endBal=Math.round(spendable-dtdRate*restDays-billsRest);
+  const afterRent=endBal-nextRent;
+  const net=st.in-st.out,waste=st.spends.filter(e=>cat(e.cat).kind==='waste'),wasteT=sum(waste);
+  const g=st.byKind.good,wp=(g+st.byKind.neutral+wasteT)?wasteT/(g+st.byKind.neutral+wasteT)*100:0;
+  // straight talk
+  let msg,mcol;
+  if(left<0){msg=`You're ${fmt(-left)} over. Stop spending until Friday.`;mcol='var(--fifty)'}
+  else if(wp>=S.thr.amber){msg=`${fmt(wasteT)} on waste this month. That's ${pctTxt(wp)} of your day-to-day spending — too much.`;mcol='var(--fifty)'}
+  else if(afterRent<0){msg=`At this rate you'll be ${fmt(-afterRent)} short for next month's bills on the 1st. Cut back now.`;mcol='var(--fifty)'}
+  else if(wp>=S.thr.green){msg=`Waste is creeping up — ${fmt(wasteT)} so far. Keep it there.`;mcol='var(--amber)'}
+  else{msg=`You're on track. ${fmt(Math.max(0,perDay))} a day till Friday — stick to it.`;mcol='var(--good)'}
+  const tile=(bg,l,v,sub)=>`<div style="background:${bg};color:#fff;border-radius:16px;padding:12px 12px 11px"><div style="font-size:12px;opacity:.92">${l}</div><div style="font-family:Georgia,serif;font-size:25px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums">${v}</div><div style="font-size:11.5px;opacity:.92">${sub}</div></div>`;
+  const max=Math.max(1,st.in,st.out);
   const tags=tagMap('spend',e=>e.date.startsWith(m)).sort((a,b)=>b.total-a.total);
+  const wTags=tagMap('spend',e=>e.date.startsWith(m)&&cat(e.cat).kind==='waste').sort((a,b)=>b.total-a.total);
   const untagged=sum(st.spends.filter(e=>!e.note));
-  const bills=st.byKind.bill,dtd=st.out-bills;
-  return`<div class="card"><h3>Money in vs money out <small>${monthName(m)}</small></h3>
+  return`<div class="card" style="border-color:${mcol};border-width:1.5px"><div style="font-weight:700;color:${mcol}">${msg}</div></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+   ${tile('var(--five)','Left till Friday',fmt0(left),`${fmt0(Math.max(0,perDay))} a day · ${daysLeft} day${daysLeft>1?'s':''}`)}
+   ${tile('var(--fifty)','Waste this month',fmt0(wasteT),`${waste.length} spend${waste.length===1?'':'s'} · ${pctTxt(wp)}`)}
+   ${tile('var(--ten)','Spend by month end',fmt0(forecastOut),afterRent>=0?`${fmt0(afterRent)} spare after the 1st`:`${fmt0(-afterRent)} short for the 1st`)}
+   ${tile('var(--twenty)',net>=0?'Up this month':'Down this month',(net>=0?'+':'')+fmt0(net),`${fmt0(st.in)} in · ${fmt0(st.out)} out`)}
+  </div>
+  <div class="muted" style="margin-top:6px;padding:0 4px">${S.weekBudget>0?'Left till Friday uses your weekly budget.':'Left till Friday = Lloyds + Monzo + cash, minus bills still to come.'} Forecast assumes you keep spending at this month's rate.</div>
+  <div class="card"><h3>Money in vs money out <small>${monthName(m)}</small></h3>
    <div class="catrow"><div class="top"><span>💷 Money in</span><b class="pos">${fmt(st.in)}</b></div><div class="bar"><span style="width:${st.in/max*100}%;background:var(--good)"></span></div></div>
-   <div class="catrow"><div class="top"><span>💸 Money out</span><b class="neg">${fmt(st.out)}</b></div><div class="bar"><span style="width:${bills/max*100}%;background:var(--twenty)"></span><span style="width:${dtd/max*100}%;background:var(--fifty)"></span></div>
-    <div class="legend"><span><i style="background:var(--twenty)"></i>Bills ${fmt0(bills)}</span><span><i style="background:var(--fifty)"></i>Everything else ${fmt0(dtd)}</span></div></div>
-   <div class="kv" style="margin-top:8px"><span><b>${net>=0?'✅ You\'re up':'⚠️ You\'re down'}</b></span><b class="${net>=0?'pos':'neg'}">${net>=0?'+':''}${fmt(net)}</b></div>
+   <div class="catrow"><div class="top"><span>💸 Money out</span><b class="neg">${fmt(st.out)}</b></div><div class="bar"><span style="width:${st.byKind.bill/max*100}%;background:var(--twenty)"></span><span style="width:${dtd/max*100}%;background:var(--fifty)"></span></div>
+    <div class="legend"><span><i style="background:var(--twenty)"></i>Bills ${fmt0(st.byKind.bill)}</span><span><i style="background:var(--fifty)"></i>Everything else ${fmt0(dtd)}</span></div></div>
    ${st.in?`<div class="muted">You've spent ${pctTxt(st.out/st.in*100)} of what came in this month.</div>`:''}</div>
-  <div class="card"><h3>Waste <small>this month</small></h3>
-   <div class="bigspend neg">${fmt(sum(waste))}</div><div class="muted" style="margin-bottom:8px">${waste.length} waste spend${waste.length===1?'':'s'}</div>
-   ${greenBar(st)}
+  <div class="card"><h3>Waste <small>this month</small></h3>${greenBar(st)}
    ${wTags.length?`<div class="list" style="margin-top:8px">${wTags.map(o=>`<div class="it"><div class="ic">${cat(o.cat).emoji}</div><div class="mid"><div class="t">${esc(o.note)}</div><div class="s">${o.n} time${o.n>1?'s':''}</div></div><div class="a neg">${fmt(o.total)}</div></div>`).join('')}</div>`:''}</div>
   <div class="card"><h3>Tags <small>where it went</small></h3><div class="list">${tags.map(o=>`<div class="it"><div class="ic">${cat(o.cat).emoji}</div><div class="mid"><div class="t">${esc(o.note)}</div><div class="s">${o.n} time${o.n>1?'s':''} · avg ${fmt(Math.round(o.total/o.n))}</div></div><div class="a neg">${fmt(o.total)}</div></div>`).join('')||'<div class="muted">Tag your spends (e.g. Tesco) and they\'ll tally up here.</div>'}</div>
    ${untagged?`<div class="muted" style="margin-top:6px">${fmt(untagged)} spent without a tag</div>`:''}</div>`;
@@ -317,7 +351,7 @@ function vMore(){
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.1</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.2</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
