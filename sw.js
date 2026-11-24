@@ -1,4 +1,4 @@
-const C = 'bank-of-maxi-v1.7';
+const C = 'bank-of-maxi-v1.8';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(C).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', e => {

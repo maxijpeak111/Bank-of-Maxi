@@ -273,47 +273,39 @@ function entryRow(e){
 const sorted=()=>S.entries.slice().sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:(b.id>a.id?1:-1));
 
 function vHome(){
-  const now=new Date(),today=ds(now),ws=weekStart(now),we=new Date(ws);we.setDate(we.getDate()+6);
-  const wa=ds(ws),wb=ds(we),wk=S.entries.filter(e=>e.date>=wa&&e.date<=wb);
-  const wIn=sum(wk.filter(e=>e.type==='income')),wOut=sum(wk.filter(e=>e.type==='spend'));
-  const wDay=sum(wk.filter(e=>e.type==='spend'&&cat(e.cat).kind!=='bill'));
-  const m=today.slice(0,7),st=monthStats(m),lm=shiftMonth(m,-1);
-  const lmTo=sum(S.entries.filter(e=>e.type==='spend'&&e.date.startsWith(lm)&&+e.date.slice(8)<=now.getDate()));
-  const diff=st.out-lmTo;
-  const goalPct=S.goal>0?Math.min(100,Math.max(0,S.balances.savings/S.goal*100)):0;
-  const budget=budgetNow()>0?`<div style="margin-top:12px"><div class="catrow top" style="display:flex;justify-content:space-between;font-size:14px"><span>Day-to-day spend vs budget</span><b>${fmt0(wDay)} / ${fmt0(budgetNow())}</b></div>
-    <div class="bar"><span style="width:${Math.min(100,wDay/budgetNow()*100)}%;background:${wDay>budgetNow()?'var(--fifty)':wDay>budgetNow()*.8?'var(--amber)':'var(--good)'}"></span></div>
-    <div class="muted">${wDay>budgetNow()?fmt(wDay-budgetNow())+' over budget':fmt(budgetNow()-wDay)+' left until Friday'}</div></div>`:`<div class="muted" style="margin-top:10px">Set a weekly budget in More → it'll show here.</div>`;
-  const incB=Object.entries(INCOME).filter(([k])=>st.byInc[k]).map(([k,l])=>`${l} ${fmt0(st.byInc[k])}`).join(' · ');
+  const L=leftInfo(),goalPct=S.goal>0?Math.min(100,Math.max(0,S.balances.savings/S.goal*100)):0;
+  const over=L.left<0,col=over?'var(--fifty)':L.bud>0&&L.wDay>L.bud*.8?'var(--amber)':'var(--five)';
+  const g=goalPlan();
   return vBalances()+
-  `<div class="card" data-act="goal" style="padding:12px 14px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>🎯 Savings goal</span><b>${fmt0(S.balances.savings)} / ${fmt0(S.goal)}</b></div><div class="bar"><span style="width:${goalPct}%;background:var(--sav)"></span></div><div class="muted">${goalLine()}</div></div>`+
+  `<div class="card" style="background:${col};border-color:${col};color:#fff">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end"><div><div style="font-size:12px;opacity:.9">${over?'Over budget this week':'Left till Friday'}</div>
+    <div style="font-family:Georgia,serif;font-size:34px;font-weight:700;line-height:1.1">${over?fmt(-L.left):fmt(L.left)}</div></div>
+    <div style="text-align:right;font-size:13px;opacity:.95">${over?'Stop spending<br>till Friday':`<b style="font-size:17px">${fmt0(L.perDay)}</b> a day<br>${L.daysLeft} day${L.daysLeft>1?'s':''} to go`}</div></div>
+    ${L.bud>0?`<div class="bar" style="background:rgba(255,255,255,.3);margin-top:10px"><span style="width:${Math.min(100,L.wDay/L.bud*100)}%;background:#fff"></span></div><div style="font-size:12px;opacity:.9">${fmt0(L.wDay)} spent of ${fmt0(L.bud)} budget</div>`:`<div style="font-size:12px;opacity:.9;margin-top:6px">After ${fmt0(L.dueSoon)} bills to come · set a weekly budget in More</div>`}
+  </div>`+
+  `<div class="card" data-act="goal" style="padding:11px 14px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>🎯 Savings goal</span><b>${fmt0(S.balances.savings)} / ${fmt0(S.goal)}</b></div><div class="bar"><span style="width:${goalPct}%;background:var(--sav)"></span></div>${g.weeks!=null&&g.left?`<div class="muted">${g.weeks} week${g.weeks===1?'':'s'} to go</div>`:!g.left?'<div class="muted">🎉 Goal reached!</div>':''}</div>`+
   vForm()+
-  `<div class="card"><h3>This month <small>${monthName(m)}</small></h3>
-   <div class="muted">Spent so far</div><div class="bigspend neg">${fmt(st.out)}</div>
-   <div class="muted">${lmTo||diff?(diff<=0?`✅ ${fmt(-diff)} less than this point last month`:`⚠️ ${fmt(diff)} more than this point last month`):'Nothing to compare with last month yet'}</div>
-   <div style="margin-top:10px;font-size:14px">Money in: <b class="pos">${fmt(st.in)}</b>${incB?`<div class="muted">${incB}</div>`:''}</div>
-   <div style="margin-top:12px">${greenBar(st)}</div></div>`+
-  `<div class="card"><h3>This week <small>${nice(wa)} – ${nice(wb)}</small></h3>
-   <div class="stats"><div><div class="v pos">${fmt0(wIn)}</div><div class="k">In</div></div><div><div class="v neg">${fmt0(wOut)}</div><div class="k">Out</div></div><div><div class="v">${fmt0(wIn-wOut)}</div><div class="k">Net</div></div></div>${budget}</div>`+
-  `<div class="card"><h3>Recent</h3><div class="list">${sorted().slice(0,12).map(entryRow).join('')||'<div class="muted">Nothing logged yet — add your first spend above.</div>'}</div>${S.entries.length>12?`<button class="btn ghost" data-act="tab" data-v="history">See all</button>`:''}</div>`;
+  `<div class="card"><h3>Recent</h3><div class="list">${sorted().slice(0,6).map(entryRow).join('')||'<div class="muted">Nothing logged yet — add your first spend above.</div>'}</div>${S.entries.length>6?`<button class="btn ghost" data-act="tab" data-v="history">See all</button>`:''}</div>`;
 }
-
 function billsBetween(fromDs,toDs){let t=0;const d=pd(fromDs),end=pd(toDs);for(let i=0;i<70&&d<=end;i++){const dim=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();S.bills.filter(b=>b.active).forEach(b=>{if(d.getDate()===Math.min(b.day,dim))t+=b.amount});d.setDate(d.getDate()+1)}return t}
+function leftInfo(){
+  const now=new Date(),today=ds(now),tmr=new Date(now);tmr.setDate(tmr.getDate()+1);
+  const nextFri=new Date(now);nextFri.setDate(nextFri.getDate()+(((5-now.getDay())+7)%7||7));
+  const daysLeft=Math.max(1,Math.round((nextFri-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/864e5));
+  const eom=new Date(now.getFullYear(),now.getMonth()+1,0);
+  const ws=ds(weekStart(now)),wDay=sum(S.entries.filter(e=>e.type==='spend'&&e.date>=ws&&e.date<=today&&cat(e.cat).kind!=='bill'));
+  const dueSoon=billsBetween(ds(tmr),ds(new Date(Math.max(nextFri,eom))));
+  const bud=budgetNow(),spendable=S.balances.lloyds+S.balances.monzo+S.balances.cash;
+  const left=bud>0?bud-wDay:spendable-dueSoon;
+  return{left,perDay:Math.floor(left/daysLeft),daysLeft,wDay,bud,dueSoon};
+}
 function vBreakdown(){
   const now=new Date(),today=ds(now),m=today.slice(0,7),st=monthStats(m);
   const tmr=new Date(now);tmr.setDate(tmr.getDate()+1);
-  const nextFri=new Date(now);nextFri.setDate(nextFri.getDate()+(((5-now.getDay())+7)%7||7));
-  const daysLeft=Math.max(1,Math.round((nextFri-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/864e5));
   const dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate(),dayN=now.getDate();
   const eom=new Date(now.getFullYear(),now.getMonth(),dim);
   const spendable=S.balances.lloyds+S.balances.monzo+S.balances.cash;
-  // money left till Friday
-  const ws=ds(weekStart(now)),wDay=sum(S.entries.filter(e=>e.type==='spend'&&e.date>=ws&&e.date<=today&&cat(e.cat).kind!=='bill'));
-  const upto=new Date(Math.max(nextFri,eom)),dueSoon=billsBetween(ds(tmr),ds(upto));
-  let left,leftSub;
-  if(budgetNow()>0){left=budgetNow()-wDay;leftSub=`of your ${fmt0(budgetNow())} budget`}
-  else{left=spendable-dueSoon;leftSub=`after ${fmt0(dueSoon)} bills to come`}
-  const perDay=Math.floor(left/daysLeft);
+  const LI=leftInfo(),left=LI.left,perDay=LI.perDay,daysLeft=LI.daysLeft;
   // forecast
   const dtd=st.out-st.byKind.bill,dtdRate=dtd/dayN,restDays=dim-dayN;
   const billsRest=billsBetween(ds(tmr),ds(eom));
@@ -337,17 +329,22 @@ function vBreakdown(){
   const untagged=sum(st.spends.filter(e=>!e.note));
   return`<div class="card" style="border-color:${mcol};border-width:1.5px"><div style="font-weight:700;color:${mcol}">${msg}</div></div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
-   ${tile('var(--five)','Left till Friday',fmt0(left),`${fmt0(Math.max(0,perDay))} a day · ${daysLeft} day${daysLeft>1?'s':''}`)}
+   ${(()=>{const sv=st.es.filter(e=>e.type==='transfer'&&e.to==='savings'),out=st.es.filter(e=>e.type==='transfer'&&e.pot==='savings'),n=sum(sv)-sum(out);return tile('var(--five)','Saved this month',(n<0?'-':'')+fmt0(Math.abs(n)),S.goalWeekly?`aim: ${fmt0(S.goalWeekly)} a week`:`into Savings`)})()}
    ${tile('var(--fifty)','Waste this month',fmt0(wasteT),`${waste.length} spend${waste.length===1?'':'s'} · ${pctTxt(wp)}`)}
    ${tile('var(--ten)','Spend by month end',fmt0(forecastOut),afterRent>=0?`${fmt0(afterRent)} spare after the 1st`:`${fmt0(-afterRent)} short for the 1st`)}
    ${tile('var(--twenty)',net>=0?'Up this month':'Down this month',(net>=0?'+':'')+fmt0(net),`${fmt0(st.in)} in · ${fmt0(st.out)} out`)}
   </div>
-  <div class="muted" style="margin-top:6px;padding:0 4px">${budgetNow()>0?'Left till Friday uses your weekly budget.':'Left till Friday = Lloyds + Monzo + cash, minus bills still to come.'} Forecast assumes you keep spending at this month's rate.</div>
+  <div class="muted" style="margin-top:6px;padding:0 4px">Forecast assumes you keep spending at this month's rate.</div>
   <div class="card"><h3>Money in vs money out <small>${monthName(m)}</small></h3>
    <div class="catrow"><div class="top"><span>💷 Money in</span><b class="pos">${fmt(st.in)}</b></div><div class="bar"><span style="width:${st.in/max*100}%;background:var(--good)"></span></div></div>
    <div class="catrow"><div class="top"><span>💸 Money out</span><b class="neg">${fmt(st.out)}</b></div><div class="bar"><span style="width:${st.byKind.bill/max*100}%;background:var(--twenty)"></span><span style="width:${dtd/max*100}%;background:var(--fifty)"></span></div>
     <div class="legend"><span><i style="background:var(--twenty)"></i>Bills ${fmt0(st.byKind.bill)}</span><span><i style="background:var(--fifty)"></i>Everything else ${fmt0(dtd)}</span></div></div>
-   ${st.in?`<div class="muted">You've spent ${pctTxt(st.out/st.in*100)} of what came in this month.</div>`:''}</div>
+   ${st.in?`<div class="muted">You've spent ${pctTxt(st.out/st.in*100)} of what came in this month.</div>`:''}
+   <div class="muted">${(()=>{const lm=shiftMonth(m,-1),lmTo=sum(S.entries.filter(e=>e.type==='spend'&&e.date.startsWith(lm)&&+e.date.slice(8)<=dayN)),d=st.out-lmTo;return lmTo?(d<=0?`✅ ${fmt(-d)} less than this point last month`:`⚠️ ${fmt(d)} more than this point last month`):'Nothing to compare with last month yet'})()}</div></div>
+  <div class="card" data-act="goal"><h3>🎯 Savings goal <small>tap to edit</small></h3>
+   <div style="display:flex;justify-content:space-between;font-size:14px"><span>${fmt0(S.balances.savings)} saved</span><b>${fmt0(S.goal)}</b></div>
+   <div class="bar"><span style="width:${S.goal>0?Math.min(100,Math.max(0,S.balances.savings/S.goal*100)):0}%;background:var(--sav)"></span></div>
+   <div style="font-size:14px">${goalPlan().left?fmt0(goalPlan().left)+' to go':''}</div><div class="muted">${goalLine()}</div></div>
   <div class="card"><h3>Waste <small>this month</small></h3>${greenBar(st)}
    ${wTags.length?`<div class="list" style="margin-top:8px">${wTags.map(o=>`<div class="it"><div class="ic">${cat(o.cat).emoji}</div><div class="mid"><div class="t">${esc(o.note)}</div><div class="s">${o.n} time${o.n>1?'s':''}</div></div><div class="a neg">${fmt(o.total)}</div></div>`).join('')}</div>`:''}</div>
   <div class="card"><h3>Tags <small>where it went</small></h3><div class="list">${tags.map(o=>`<div class="it"><div class="ic">${cat(o.cat).emoji}</div><div class="mid"><div class="t">${esc(o.note)}</div><div class="s">${o.n} time${o.n>1?'s':''} · avg ${fmt(Math.round(o.total/o.n))}</div></div><div class="a neg">${fmt(o.total)}</div></div>`).join('')||'<div class="muted">Tag your spends (e.g. Tesco) and they\'ll tally up here.</div>'}</div>
@@ -380,7 +377,7 @@ function vMore(){
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.7</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.8</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
