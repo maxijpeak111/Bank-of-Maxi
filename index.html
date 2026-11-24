@@ -270,23 +270,26 @@ function vHome(){
 }
 
 function vBreakdown(){
-  const m=VM,st=monthStats(m),lst=monthStats(shiftMonth(m,-1));
-  const cats=S.categories.map(c=>({c,v:sum(st.spends.filter(e=>e.cat===c.id)),l:sum(lst.spends.filter(e=>e.cat===c.id))})).filter(x=>x.v||x.l).sort((a,b)=>b.v-a.v);
-  const max=Math.max(1,...cats.map(x=>Math.max(x.v,x.l)));
+  const m=ds().slice(0,7),st=monthStats(m);
+  const max=Math.max(1,st.in,st.out),net=st.in-st.out;
+  const waste=st.spends.filter(e=>cat(e.cat).kind==='waste');
+  const wTags=tagMap('spend',e=>e.date.startsWith(m)&&cat(e.cat).kind==='waste').sort((a,b)=>b.total-a.total);
   const tags=tagMap('spend',e=>e.date.startsWith(m)).sort((a,b)=>b.total-a.total);
-  const incs=Object.entries(INCOME).map(([k,l])=>[l,st.byInc[k]||0]).filter(x=>x[1]);
-  const mem=st.spends.filter(e=>e.billId&&(S.bills.find(b=>b.id===e.billId)||{}).member);
-  return`<div class="card"><div class="row" style="justify-content:space-between"><button class="btn ghost sm" data-act="month" data-v="-1">‹</button><h3 style="margin:0">${monthName(m)}</h3><button class="btn ghost sm" data-act="month" data-v="1">›</button></div>
-   <div class="stats" style="margin-top:12px"><div><div class="v pos">${fmt0(st.in)}</div><div class="k">In</div></div><div><div class="v neg">${fmt0(st.out)}</div><div class="k">Spent</div></div><div><div class="v">${fmt0(st.in-st.out)}</div><div class="k">Net</div></div></div>
-   <div class="muted" style="text-align:center;margin-top:6px">Last month spent ${fmt0(lst.out)}</div></div>
-  <div class="card"><h3>Food vs waste</h3>${greenBar(st)}</div>
-  <div class="card"><h3>By category <small>grey = last month</small></h3>${cats.map(x=>`<div class="catrow"><div class="top"><span>${x.c.emoji} ${esc(x.c.name)}</span><span><b>${fmt(x.v)}</b> <small>${fmt0(x.l)}</small></span></div>
-    <div class="bar" style="height:9px;margin:3px 0 1px"><span style="width:${x.v/max*100}%;background:${KCOL[x.c.kind]}"></span></div><div class="bar" style="height:4px;margin:0"><span style="width:${x.l/max*100}%;background:#CFC5AE"></span></div></div>`).join('')||'<div class="muted">No spending this month.</div>'}</div>
-  <div class="card"><h3>Money in</h3>${incs.map(([l,v])=>`<div class="kv"><span>${l}</span><b class="pos">${fmt(v)}</b></div>`).join('')||'<div class="muted">No money in logged.</div>'}</div>
-  <div class="card"><h3>Tags <small>where it went</small></h3><div class="list">${tags.map(o=>`<div class="it"><div class="ic">${cat(o.cat).emoji}</div><div class="mid"><div class="t">${esc(o.note)}</div><div class="s">${o.n} time${o.n>1?'s':''} · avg ${fmt(Math.round(o.total/o.n))}</div></div><div class="a neg">${fmt(o.total)}</div></div>`).join('')||'<div class="muted">Tag your spends (e.g. Tesco) and they\'ll tally up here.</div>'}</div></div>
-  <div class="card"><h3>Subscriptions & memberships <small>paid this month</small></h3>${mem.map(e=>`<div class="kv"><span>${esc(e.note)}</span><b>${fmt(e.amount)}</b></div>`).join('')||'<div class="muted">None paid yet this month.</div>'}${mem.length?`<div class="kv"><span><b>Total</b></span><b>${fmt(sum(mem))}</b></div>`:''}</div>`;
+  const untagged=sum(st.spends.filter(e=>!e.note));
+  const bills=st.byKind.bill,dtd=st.out-bills;
+  return`<div class="card"><h3>Money in vs money out <small>${monthName(m)}</small></h3>
+   <div class="catrow"><div class="top"><span>💷 Money in</span><b class="pos">${fmt(st.in)}</b></div><div class="bar"><span style="width:${st.in/max*100}%;background:var(--good)"></span></div></div>
+   <div class="catrow"><div class="top"><span>💸 Money out</span><b class="neg">${fmt(st.out)}</b></div><div class="bar"><span style="width:${bills/max*100}%;background:var(--twenty)"></span><span style="width:${dtd/max*100}%;background:var(--fifty)"></span></div>
+    <div class="legend"><span><i style="background:var(--twenty)"></i>Bills ${fmt0(bills)}</span><span><i style="background:var(--fifty)"></i>Everything else ${fmt0(dtd)}</span></div></div>
+   <div class="kv" style="margin-top:8px"><span><b>${net>=0?'✅ You\'re up':'⚠️ You\'re down'}</b></span><b class="${net>=0?'pos':'neg'}">${net>=0?'+':''}${fmt(net)}</b></div>
+   ${st.in?`<div class="muted">You've spent ${pctTxt(st.out/st.in*100)} of what came in this month.</div>`:''}</div>
+  <div class="card"><h3>Waste <small>this month</small></h3>
+   <div class="bigspend neg">${fmt(sum(waste))}</div><div class="muted" style="margin-bottom:8px">${waste.length} waste spend${waste.length===1?'':'s'}</div>
+   ${greenBar(st)}
+   ${wTags.length?`<div class="list" style="margin-top:8px">${wTags.map(o=>`<div class="it"><div class="ic">${cat(o.cat).emoji}</div><div class="mid"><div class="t">${esc(o.note)}</div><div class="s">${o.n} time${o.n>1?'s':''}</div></div><div class="a neg">${fmt(o.total)}</div></div>`).join('')}</div>`:''}</div>
+  <div class="card"><h3>Tags <small>where it went</small></h3><div class="list">${tags.map(o=>`<div class="it"><div class="ic">${cat(o.cat).emoji}</div><div class="mid"><div class="t">${esc(o.note)}</div><div class="s">${o.n} time${o.n>1?'s':''} · avg ${fmt(Math.round(o.total/o.n))}</div></div><div class="a neg">${fmt(o.total)}</div></div>`).join('')||'<div class="muted">Tag your spends (e.g. Tesco) and they\'ll tally up here.</div>'}</div>
+   ${untagged?`<div class="muted" style="margin-top:6px">${fmt(untagged)} spent without a tag</div>`:''}</div>`;
 }
-
 function nextDue(b){const n=new Date();let y=n.getFullYear(),mo=n.getMonth();const dim=(y,m)=>new Date(y,m+1,0).getDate();let d=Math.min(b.day,dim(y,mo));if(d<=n.getDate()){mo++;if(mo>11){mo=0;y++}d=Math.min(b.day,dim(y,mo))}return ds(new Date(y,mo,d))}
 function vBills(){
   const act=S.bills.filter(b=>b.active),mem=act.filter(b=>b.member),oth=act.filter(b=>!b.member);
@@ -314,7 +317,7 @@ function vMore(){
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.1</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
