@@ -299,6 +299,58 @@ function leftInfo(){
   const left=bud>0?bud-wDay:spendable-dueSoon;
   return{left,perDay:Math.floor(left/daysLeft),daysLeft,wDay,bud,dueSoon};
 }
+/* ---------- bill pots ----------
+   Lloyds + Monzo is shared out every time it changes:
+   1) what's left of this week's essentials budget is kept back
+   2) rent fills first
+   3) every other bill fills evenly (all at the same %)
+   4) anything over is free money */
+const isRent=b=>b.id==='rent'||/rent/i.test(b.name);
+function potsInfo(){
+  const bank=Math.max(0,S.balances.lloyds+S.balances.monzo);
+  const now=new Date(),today=ds(now),ws=ds(weekStart(now));
+  const wDay=sum(S.entries.filter(e=>e.type==='spend'&&e.date>=ws&&e.date<=today&&cat(e.cat).kind!=='bill'));
+  const bud=budgetNow(),reserve=Math.min(bank,Math.max(0,bud-wDay));
+  let avail=bank-reserve;
+  const act=S.bills.filter(b=>b.active);
+  let rent=act.find(isRent);if(!rent&&act.length)rent=act.slice().sort((a,b)=>b.amount-a.amount)[0];
+  const saved={};
+  if(rent){saved[rent.id]=Math.min(avail,rent.amount);avail-=saved[rent.id]}
+  const others=act.filter(b=>b!==rent),oTot=sum(others),oPct=oTot?Math.min(1,avail/oTot):1;
+  others.forEach(b=>saved[b.id]=Math.round(b.amount*oPct));
+  const othersSaved=others.reduce((t,b)=>t+saved[b.id],0);avail=Math.max(0,avail-othersSaved);
+  const billTot=sum(act),billSaved=Object.values(saved).reduce((a,b)=>a+b,0);
+  const nextFri=new Date(now);nextFri.setDate(nextFri.getDate()+(((5-now.getDay())+7)%7||7));
+  const shortSoon=act.filter(b=>pd(nextDue(b))<=nextFri&&saved[b.id]<b.amount);
+  return{bank,bud,wDay,reserve,rent,others,saved,rentSaved:rent?saved[rent.id]:0,othersSaved,oTot,free:avail,billTot,billSaved,shortSoon,weekly:Math.round(billTot*12/52)};
+}
+const perWeek=p=>Math.round(p*12/52);
+function avgWeeklyPay(){
+  const since=new Date();since.setDate(since.getDate()-28);const s=ds(since);
+  const inc=S.entries.filter(e=>e.type==='income'&&e.date>=s&&e.inc!=='aiden'&&(e.pot==='lloyds'||e.pot==='monzo'||e.pot==='cash'));
+  return inc.length?Math.round(sum(inc)/4):0;
+}
+function vPots(){
+  const P=potsInfo();
+  const segs=[[P.reserve,'var(--good)','Essentials budget'],[P.rentSaved,'var(--twenty)','Rent'],[P.othersSaved,'var(--ten)','Other bills'],[P.free,'var(--sav)','Free']];
+  const T=Math.max(1,P.bank);
+  const pay=avgWeeklyPay()||41500,left=pay-P.weekly-P.bud;
+  return`<div class="card"><h3>🏦 Your pots <small>Lloyds + Monzo ${fmt(P.bank)}</small></h3>
+   <div class="bar" style="height:14px">${segs.map(([v,c])=>`<span style="width:${v/T*100}%;background:${c}"></span>`).join('')}</div>
+   <div class="legend">${segs.map(([v,c,l])=>`<span><i style="background:${c}"></i>${l} ${fmt0(v)}</span>`).join('')}</div>
+   <div class="kv" style="margin-top:8px" data-act="budget"><span>🛒 Kept back for essentials</span><b>${P.bud?fmt(P.reserve)+' <small class="muted">of '+fmt0(P.bud)+' left this week</small>':'Set budget ›'}</b></div>
+   <div class="kv"><span>🧾 Bills covered</span><b>${fmt(P.billSaved)} / ${fmt(P.billTot)} · ${pctTxt(P.billTot?P.billSaved/P.billTot*100:0)}</b></div>
+   <div class="kv"><span>✨ Free money</span><b>${fmt(P.free)}</b></div>
+   ${P.shortSoon.length?`<div class="status" style="color:var(--fifty);margin-top:8px">⚠️ Due before Friday and not fully covered: ${P.shortSoon.map(b=>esc(b.name)+' (short '+fmt(b.amount-P.saved[b.id])+')').join(', ')}</div>`:''}
+   <div class="muted" style="margin-top:8px">Every time money goes in: your essentials budget is kept back first, then rent fills, then the other bills fill evenly. Anything over is free.</div></div>
+  <div class="card"><h3>📆 Your week <small>${avgWeeklyPay()?'avg pay last 4 weeks':'based on ~£415 pay'}</small></h3>
+   <div class="kv"><span>💷 Pay in</span><b>${fmt0(pay)}</b></div>
+   <div class="kv"><span>🧾 Bills set aside</span><b>−${fmt0(P.weekly)}</b></div>
+   ${P.rent?`<div class="kv"><span style="padding-left:14px">of which rent</span><b class="muted">${fmt0(perWeek(P.rent.amount))}</b></div>`:''}
+   <div class="kv" data-act="budget"><span>🛒 Essentials budget</span><b>${P.bud?'−'+fmt0(P.bud):'Not set ›'}</b></div>
+   <div class="kv"><span>✨ Left for savings / fun</span><b class="${left<0?'neg':'pos'}">${fmt0(left)}</b></div>
+   ${!P.bud?`<button class="btn sm" data-act="potBud" data-v="${Math.max(4000,Math.min(8000,Math.round((pay-P.weekly)/2/500)*500))}">Use ${fmt0(Math.max(4000,Math.min(8000,Math.round((pay-P.weekly)/2/500)*500)))}/week for essentials</button>`:''}</div>`;
+}
 function vBreakdown(){
   const now=new Date(),today=ds(now),m=today.slice(0,7),st=monthStats(m);
   const tmr=new Date(now);tmr.setDate(tmr.getDate()+1);
@@ -353,9 +405,13 @@ function vBreakdown(){
 function nextDue(b){const n=new Date();let y=n.getFullYear(),mo=n.getMonth();const dim=(y,m)=>new Date(y,m+1,0).getDate();let d=Math.min(b.day,dim(y,mo));if(d<=n.getDate()){mo++;if(mo>11){mo=0;y++}d=Math.min(b.day,dim(y,mo))}return ds(new Date(y,mo,d))}
 function vBills(){
   const act=S.bills.filter(b=>b.active),mem=act.filter(b=>b.member),oth=act.filter(b=>!b.member);
-  const row=b=>`<div class="it" data-act="bill" data-id="${b.id}"><div class="ic">${b.member?'🎟️':'🏠'}</div><div class="mid"><div class="t">${esc(b.name)}${b.active?'':'<span class="pill">paused</span>'}</div><div class="s">${ord(b.day)} of the month · ${POTS[b.pot].name}${b.active?' · next '+nice(nextDue(b)):''}</div></div><div class="a">${fmt(b.amount)}</div></div>`;
+  const P=potsInfo();
+  const row=b=>{const sv=P.saved[b.id]||0,pc=b.amount?Math.min(100,sv/b.amount*100):0,full=sv>=b.amount;
+    return`<div class="it" data-act="bill" data-id="${b.id}"><div class="ic">${b.member?'🎟️':isRent(b)?'🏠':'🧾'}</div><div class="mid"><div class="t">${esc(b.name)}${b.active?'':'<span class="pill">paused</span>'}</div><div class="s">${ord(b.day)} of the month · ${POTS[b.pot].name}${b.active?' · next '+nice(nextDue(b)):''}</div>
+    ${b.active?`<div class="bar" style="margin:6px 0 2px"><span style="width:${pc}%;background:${full?'var(--good)':isRent(b)?'var(--twenty)':'var(--ten)'}"></span></div><div class="s">${full?'✅ Covered':`<b>${fmt(sv)}</b> saved · ${pctTxt(pc)}`} · needs ~${fmt0(perWeek(b.amount))}/week</div>`:''}</div>
+    <div class="a">${fmt(b.amount)}</div></div>`};
   const paused=S.bills.filter(b=>!b.active);
-  return`<div class="card"><h3>Monthly bills <small>${fmt(sum(act))}/month</small></h3>
+  return vPots()+`<div class="card"><h3>Monthly bills <small>${fmt(sum(act))}/month</small></h3>
    <div class="muted">These log themselves on their day and come out of the account shown.</div></div>
   <div class="card"><h3>Bills <small>${fmt(sum(oth))}</small></h3><div class="list">${oth.map(row).join('')||'<div class="muted">None</div>'}</div></div>
   <div class="card"><h3>Subscriptions & memberships <small>${fmt(sum(mem))}</small></h3><div class="list">${mem.map(row).join('')||'<div class="muted">None</div>'}</div></div>
@@ -377,7 +433,7 @@ function vMore(){
     <button class="btn ghost" data-act="export">Save backup file</button><button class="btn ghost" data-act="import">Restore from backup</button>
     <input type="file" id="imp" accept="application/json,.json" style="display:none"></div>
   <div class="card"><h3>All entries</h3><button class="btn ghost" data-act="tab" data-v="history">View history (${S.entries.length})</button></div>
-  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.8</p>`;
+  <p class="muted" style="text-align:center;margin:18px 0">Bank of Maxi · v1.9</p>`;
 }
 function vHistory(){
   const g={};sorted().forEach(e=>{const k=e.date.slice(0,7);(g[k]=g[k]||[]).push(e)});
@@ -417,7 +473,7 @@ const A={
     if(!(amt>0)){toastMsg('Enter an amount','',1600);document.getElementById('amt').focus();return}
     const e={id:uid(),date:F.date||ds(),type:F.type,amount:amt,pot:F.pot,note:F.note.trim()};
     if(F.type==='spend')e.cat=F.cat;if(F.type==='income')e.inc=F.inc;if(F.type==='transfer')e.to=F.to;
-    const b=S.balances[e.pot];S.entries.push(e);apply(e,1);const a=S.balances[e.pot];save();
+    const P0=potsInfo();const b=S.balances[e.pot];S.entries.push(e);apply(e,1);const a=S.balances[e.pot];save();const P1=potsInfo();
     const pn=POTS[e.pot].name;let p,s;
     if(e.type==='spend'){
       p=b>0?'−'+pctTxt(amt/b*100):'−'+fmt(amt);
@@ -426,6 +482,8 @@ const A={
     }else if(e.type==='income'){
       p=b>0?'+'+pctTxt(amt/b*100):'+'+fmt(amt);
       s=`to ${pn} · ${fmt(b)} → ${fmt(a)}`;if(e.inc==='aiden')s+=`<br>Aiden now owes ${fmt(S.aiden.owed)}`;
+      if(e.pot==='lloyds'||e.pot==='monzo'){const parts=[['🛒 Essentials',P1.reserve-P0.reserve],['🏠 Rent',P1.rentSaved-P0.rentSaved],['🧾 Other bills',P1.othersSaved-P0.othersSaved],['✨ Free',P1.free-P0.free]].filter(x=>x[1]>0);
+        if(parts.length)s+='<br>'+parts.map(([l,v])=>`${l} +${fmt0(v)}`).join(' · ')+(P1.rent?`<br>Rent now ${pctTxt(P1.rentSaved/P1.rent.amount*100)} saved`:'')}
     }else{
       p=b>0?pctTxt(amt/b*100)+' moved':fmt(amt)+' moved';
       s=`${pn} → ${POTS[e.to].name} · ${fmt(amt)}`;
@@ -433,6 +491,7 @@ const A={
     toastMsg(p,s,3200);F.amt='';F.note='';F.date=ds();render();
   },
   allBal(){},
+  potBud(d){S.budgetAuto=false;S.weekBudget=+d.v;save();render();toastMsg('Essentials budget: '+fmt0(+d.v)+'/week','Kept back first from each pay-in')},
   editBal(d,_,el,ev){ev.stopPropagation();
     const cur=S.balances[d.k];let neg=cur<0;
     const bg=sheet(`<h3>${POTS[d.k].name} balance</h3><div class="muted">Type what's in there now — it replaces the old number.</div>
